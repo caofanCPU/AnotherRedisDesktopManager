@@ -15,9 +15,25 @@ Vue.use(ElementUI, { size: 'small' });
 Vue.config.productionTip = false;
 
 /* eslint-disable no-new */
-new Vue({
+var vue = new Vue({
   el: '#app',
   i18n,
   components: { App },
   template: '<App/>',
 });
+
+// handle uncaught exception
+process.on('uncaughtException', (err, origin) => {
+  if (!err) {
+    return;
+  }
+
+  vue.$message.error({
+    message: 'Uncaught Exception: ' + err,
+    duration: 5000,
+  });
+
+  vue.$bus.$emit('closeConnection');
+});
+
+export default vue;

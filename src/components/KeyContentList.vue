@@ -9,10 +9,9 @@
       </el-form>
 
       <!-- edit & add dialog -->
-      <el-dialog :title="dialogTitle" :visible.sync="editDialog" @open='openDialog'>
+      <el-dialog :title="dialogTitle" :visible.sync="editDialog" @open='openDialog' :close-on-click-modal='false'>
         <el-form>
           <el-form-item label="Value">
-            <span v-if='editLineItem.binary' class='content-binary'>Hex</span>
             <FormatViewer ref='formatViewer' :content.sync='editLineItem.value'></FormatViewer>
           </el-form-item>
         </el-form>
@@ -33,12 +32,12 @@
       :data="listData">
       <el-table-column
         type="index"
-        label="ID"
+        :label="'ID (Total: ' + total + ')'"
         sortable
         width="150">
       </el-table-column>
       <el-table-column
-        prop="value"
+        prop="valueDisplay"
         resizable
         sortable
         show-overflow-tooltip
@@ -75,6 +74,7 @@ import FormatViewer from '@/components/FormatViewer';
 export default {
   data() {
     return {
+      total: 0,
       filterValue: '',
       editDialog: false,
       listData: [], // {value: xxx}
@@ -107,14 +107,22 @@ export default {
 
         for (const i of reply) {
           listData.push({
-            value: this.$util.bufToString(i),
-            binary: !this.$util.bufVisible(i),
+            value: i,
+            valueDisplay: this.$util.bufToString(i),
           });
         }
 
         this.listData = resetTable ? listData : this.listData.concat(listData);
         (listData.length < this.pageSize) && (this.loadMoreDisable = true);
         this.loadingIcon = '';
+      });
+
+      // total lines
+      this.initTotal();
+    },
+    initTotal() {
+      this.client.llen(this.redisKey).then((reply) => {
+        this.total = reply;
       });
     },
     resetTable() {
@@ -133,7 +141,7 @@ export default {
     },
     showEditDialog(row) {
       this.editLineItem = row;
-      this.beforeEditItem = JSON.parse(JSON.stringify(row));
+      this.beforeEditItem = this.$util.cloneObjWithBuff(row);
       this.editDialog = true;
     },
     editLine() {
@@ -144,13 +152,13 @@ export default {
 
       this.editDialog = false;
 
-      if (!after.value || before.value == after.value) {
+      if (!after.value || (before.value && before.value.equals(after.value))) {
         return;
       }
 
       client.rpush(
         key,
-        before.binary ? this.$util.xToBuffer(after.value) : after.value
+        after.value
       ).then((reply) => {
         // reply return list length if success
         if (reply > 0) {
@@ -159,7 +167,7 @@ export default {
             client.lrem(
               key,
               1,
-              before.binary ? this.$util.xToBuffer(before.value) : before.value
+              before.value
             ).then((reply) => {
               this.initShow();
             });
@@ -184,7 +192,7 @@ export default {
         this.client.lrem(
           this.redisKey,
           1,
-          row.binary ? this.$util.xToBuffer(row.value) : row.value
+          row.value
         ).then((reply) => {
           if (reply === 1) {
             this.$message.success({

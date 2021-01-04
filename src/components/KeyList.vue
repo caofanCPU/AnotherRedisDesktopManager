@@ -1,15 +1,12 @@
 <template>
   <div>
     <!-- key list -->
-    <ul class='key-list'>
-      <RightClickMenu
-        :items='rightMenus'
-        :clickValue='key'
-        :key='key.toString()'
-        v-for='key of keyList'>
-        <li class='key-item' :title='key'  @click='clickKey(key, $event)'>{{$util.bufToString(key)}}</li>
-      </RightClickMenu>
-    </ul>
+    <component
+      :is="keyListType"
+      :config="config"
+      :client="client"
+      :keyList="keyList">
+    </component>
 
     <!-- load more -->
     <el-button
@@ -23,37 +20,26 @@
 </template>
 
 <script type="text/javascript">
-import RightClickMenu from '@/components/RightClickMenu';
+import KeyListTree from '@/components/KeyListTree';
+import KeyListNormal from '@/components/KeyListNormal';
 
 export default {
   data() {
     return {
       keyList: [],
-      keysPageSize: 200,
+      keyListType: this.config.separator === '' ? 'KeyListNormal' : 'KeyListTree',
+      keysPageSize: this.keyListType === 'KeyListNormal' ? 200 : 400,
       searchPageSize: 10000,
-      rightMenus: [
-        {
-          name: this.$t('message.open'),
-          click: (clickValue, event) => {
-            this.clickKey(clickValue, event, false);
-          },
-        },
-        {
-          name: this.$t('message.open_new_tab'),
-          click: (clickValue, event) => {
-            this.clickKey(clickValue, event, true);
-          },
-        },
-      ],
       scanStreams: [],
-      scanEndCount: 0,
+      scanningCount: 0,
       scanMoreDisabled: false,
-      oneTimeListLength: 0,
-      firstScanFinished: false,
+      onePageList: [],
+      onePageFinishedCount: 0,
+      firstPageFinished: false,
     };
   },
-  props: ['client'],
-  components: {RightClickMenu},
+  props: ['client', 'config'],
+  components: {KeyListTree, KeyListNormal},
   created() {
     // add or remove key from key list directly
     this.$bus.$on('refreshKeyList', (client, key = '', type = 'del') => {
@@ -69,21 +55,6 @@ export default {
   methods: {
     initShow() {
       this.refreshKeyList();
-    },
-    clickKey(key, event = null, newTab = false) {
-      // highlight clicked key
-      event && this.hightKey(event);
-      event && (event.ctrlKey || event.metaKey) && (newTab = true);
-      this.$bus.$emit('clickedKey', this.client, key, newTab);
-    },
-    hightKey(event) {
-      for (const ele of document.querySelectorAll('.key-select')) {
-        ele.classList.remove("key-select");
-      }
-
-      if (event) {
-        event.target.classList.add('key-select');
-      }
     },
     refreshKeyList(resetKeyList = true) {
       // reset previous list, not append mode
@@ -104,8 +75,9 @@ export default {
 
       // scan more, resume previous scanStream
       else {
-        // reset one scan count
-        this.oneTimeListLength = 0;
+        // reset one page scan param
+        this.onePageList = [];
+        this.onePageFinishedCount = 0;
 
         for (var stream of this.scanStreams) {
           stream.resume();
@@ -115,7 +87,7 @@ export default {
     initScanStreamsAndScan() {
       // this.client.nodes: cluster
       let nodes = this.client.nodes ? this.client.nodes('master') : [this.client];
-      this.scanEndCount = nodes.length;
+      this.scanningCount = nodes.length;
 
       nodes.map(node => {
         let scanOption = {
@@ -130,22 +102,26 @@ export default {
         this.scanStreams.push(stream);
 
         stream.on('data', keys => {
-          // clear key list only after data scaned, to prevent list jitter
-          if (!this.firstScanFinished) {
-            this.firstScanFinished = true;
-            this.keyList = [];
-          }
-
-          this.oneTimeListLength += keys.length;
-          this.keyList = this.keyList.concat(keys.sort());
+          this.onePageList = this.onePageList.concat(keys);
 
           // scan once reaches page size
-          if (this.oneTimeListLength >= this.keysPageSize) {
+          if (this.onePageList.length >= this.keysPageSize) {
             // temp stop
             stream.pause();
-
             // search input icon recover
             this.$parent.$parent.$parent.$refs.operateItem.searchIcon = 'el-icon-search';
+
+            // last node refresh keylist
+            if (++this.onePageFinishedCount >= this.scanningCount) {
+              // clear key list only after data scaned, to prevent list jitter
+              if (!this.firstPageFinished) {
+                this.firstPageFinished = true;
+                this.keyList = [];
+              }
+
+              // this page key list append to raw key list
+              this.keyList = this.keyList.concat(this.onePageList.sort());
+            }
           }
         });
 
@@ -154,7 +130,7 @@ export default {
 
           // scan command disabled, other functions may be used normally
           if (
-            e.message == "ERR unknown command 'scan'" ||
+            (e.message.includes('unknown command') && e.message.includes('scan')) ||
             e.message.includes("command 'SCAN' is not allowed")
           ) {
             this.$message.error({
@@ -177,9 +153,17 @@ export default {
         });
 
         stream.on('end', () => {
-          // all nodes scan finished
-          if (--this.scanEndCount <= 0) {
-            // this.$refs.scanMoreBtn.disabled=true;
+          // all nodes scan finished(cusor back to 0)
+          if (--this.scanningCount <= 0) {
+            // clear key list only after data scaned, to prevent list jitter
+            if (!this.firstPageFinished) {
+              this.firstPageFinished = true;
+              this.keyList = [];
+            }
+
+            // this page key list append to raw key list
+            this.keyList = this.keyList.concat(this.onePageList.sort());
+
             this.scanMoreDisabled = true;
             // search input icon recover
             this.$parent.$parent.$parent.$refs.operateItem.searchIcon = 'el-icon-search';
@@ -187,11 +171,12 @@ export default {
         });
       });
     },
-    resetKeyList() {
-      // this.keyList = [];
-      this.firstScanFinished = false;
+    resetKeyList(clearKeys = false) {
+      clearKeys && (this.keyList = []);
+      this.firstPageFinished = false;
       this.scanStreams = [];
-      this.oneTimeListLength = 0;
+      this.onePageList = [];
+      this.onePageFinishedCount = 0;
       this.scanMoreDisabled = false;
     },
     refreshKeyListExact() {
@@ -227,48 +212,16 @@ export default {
       }
     },
   },
+  watch: {
+    config(newConfig) {
+      // separator changes
+      this.keyListType = newConfig.separator === '' ? 'KeyListNormal' : 'KeyListTree';
+    },
+  },
 }
 </script>
 
 <style type="text/css">
-  .connection-menu .key-list {
-    list-style-type: none;
-    padding-left: 0;
-  }
-  .connection-menu .key-list .key-item {
-    white-space:nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-    color: #292f31;
-    font-size: 0.9em;
-    line-height: 1.52;
-    /*margin-right: 3px;*/
-    padding-left: 6px;
-  }
-  .dark-mode .connection-menu .key-list .key-item {
-    color: #f7f7f7;
-  }
-  .connection-menu .key-list .key-item:hover {
-    /*color: #3c3d3e;*/
-    background: #e7ebec;
-  }
-  .dark-mode .connection-menu .key-list .key-item:hover {
-    color: #f7f7f7;
-    background: #50616b;
-  }
-  .connection-menu .key-list .key-item.key-select {
-    color: #0b7ff7;
-    background: #e7ebec;
-    box-sizing: border-box;
-    border-left: 2px solid #68acf3;
-    padding-left: 4px;
-  }
-  .dark-mode .connection-menu .key-list .key-item.key-select {
-    color: #f7f7f7;
-    background: #50616b;
-  }
-
   .load-more-keys {
     margin: 10px auto;
     display: block;

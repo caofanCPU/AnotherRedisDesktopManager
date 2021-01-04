@@ -1,6 +1,6 @@
 <template>
-  <div>
-    <el-select v-model="selectedView" class='format-selector' :style='selectStyle' size='mini'>
+  <div class="format-viewer-container">
+    <el-select v-model="selectedView" class='format-selector' :style='selectStyle' size='mini' placeholder='Text'>
       <span slot="prefix" class="fa fa-sitemap"></span>
       <el-option
         v-for="item in viewers"
@@ -9,13 +9,15 @@
         :value="item.value">
       </el-option>
     </el-select>
-    <span v-if='binary' class='formater-binary'>Hex</span>
+    <span v-if='!contentVisible' class='formater-binary-tag'>[Hex]</span>
+    <span class='formater-binary-tag'>Size: {{ $util.humanFileSize(buffSize) }}</span>
     <br>
 
     <component
       ref='viewer'
       :is='selectedView'
       :content='content'
+      :contentVisible='contentVisible'
       :textrows='textrows'
       @updateContent="$emit('update:content', $event)">
     </component>
@@ -25,15 +27,17 @@
 <script type="text/javascript">
 import ViewerText from '@/components/ViewerText';
 import ViewerJson from '@/components/ViewerJson';
+import ViewerBinary from '@/components/ViewerBinary';
 import ViewerUnserialize from '@/components/ViewerUnserialize';
 
 export default {
   data() {
     return {
-      selectedView: 'ViewerText',
+      selectedView: '',
       viewers: [
         { value: 'ViewerText', text: 'Text' },
         { value: 'ViewerJson', text: 'Json' },
+        { value: 'ViewerBinary', text: 'Binary' },
         { value: 'ViewerUnserialize', text: 'Unserialize' },
       ],
       selectStyle: {
@@ -41,30 +45,38 @@ export default {
       },
     };
   },
-  components: {ViewerText, ViewerJson, ViewerUnserialize},
+  components: {ViewerText, ViewerJson, ViewerBinary, ViewerUnserialize},
   props: {
     float: {default: 'right'},
-    content: {default: ''},
+    content: {default: () => Buffer.from('')},
     textrows: {default: 6},
-    binary: {default: false},
+  },
+  computed: {
+    contentVisible() {
+      return this.$util.bufVisible(this.content);
+    },
+    buffSize() {
+      return Buffer.byteLength(this.content);
+    },
   },
   methods: {
     autoFormat() {
-      if (!this.content) {
-        this.selectedView = 'ViewerText';
-        return;
-      }
+      // reload each viewer
+      this.selectedView = '';
 
-      if (this.$util.isJson(this.content)) {
-        this.selectedView = 'ViewerJson';
-      }
-      else {
-        this.selectedView = 'ViewerText';
-      }
+      this.$nextTick(() => {
+        if (!this.content) {
+          this.selectedView = 'ViewerText';
+          return;
+        }
 
-      // reset viewer status
-      const viewer = this.$refs.viewer;
-      viewer.resetViewer && viewer.resetViewer();
+        if (this.$util.isJson(this.content)) {
+          this.selectedView = 'ViewerJson';
+        }
+        else {
+          this.selectedView = 'ViewerText';
+        }
+      });
     },
   },
 }
@@ -89,19 +101,19 @@ export default {
     border-color: #7f8ea5;
   }
 
-  /*key field span*/
-  .vjs__tree span {
-    color: #616069;
+  /*json tree*/
+  .dark-mode .jv-container.jv-light {
+    background: none;
   }
-  .dark-mode .vjs__tree span:not([class^="vjs"]) {
+  .dark-mode .jv-container.jv-light .jv-key {
     color: #ebebec;
   }
-  /*brackets*/
-  .dark-mode .vjs__tree .vjs__tree__node {
-    color: #9e9ea2;
+  .dark-mode .jv-container.jv-light .jv-item.jv-array,
+  .dark-mode .jv-container.jv-light .jv-item.jv-object {
+    color: #b6b6b9;
   }
-  .dark-mode .vjs__tree .vjs__tree__node:hover {
-    color: #20a0ff;
+  .dark-mode .jv-container.jv-light .jv-ellipsis {
+    background: #c5c5c5;
   }
 
   .collapse-container {
@@ -112,8 +124,8 @@ export default {
     float: right;
     padding: 9px 0;
   }
-  .formater-binary {
-    padding-left: 5px;
+  .formater-binary-tag {
+    /*padding-left: 5px;*/
     color: #7ab3ef;
     font-size: 80%;
   }

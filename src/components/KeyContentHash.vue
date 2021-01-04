@@ -9,15 +9,13 @@
       </el-form>
 
       <!-- edit & add dialog -->
-      <el-dialog :title='dialogTitle' :visible.sync="editDialog" @open='openDialog'>
+      <el-dialog :title='dialogTitle' :visible.sync="editDialog" @open='openDialog' :close-on-click-modal='false'>
         <el-form>
           <el-form-item label="Field">
-            <span v-if='editLineItem.binaryK' class='content-binary'>Hex</span>
-            <el-input v-model="editLineItem.key" autocomplete="off"></el-input>
+            <InputBinary :content.sync="editLineItem.key"></InputBinary>
           </el-form-item>
 
           <el-form-item label="Value">
-            <span v-if='editLineItem.binaryV' class='content-binary'>Hex</span>
             <FormatViewer ref='formatViewer' :content.sync='editLineItem.value'></FormatViewer>
           </el-form-item>
         </el-form>
@@ -38,12 +36,12 @@
       :data="hashData">
       <el-table-column
         type="index"
-        label="ID"
+        :label="'ID (Total: ' + total + ')'"
         sortable
         width="150">
       </el-table-column>
       <el-table-column
-        prop="key"
+        prop="keyDisplay"
         sortable
         resizable
         label="Key"
@@ -51,7 +49,7 @@
         >
       </el-table-column>
       <el-table-column
-        prop="value"
+        prop="valueDisplay"
         resizable
         sortable
         show-overflow-tooltip
@@ -92,10 +90,12 @@
 <script>
 import PaginationTable from '@/components/PaginationTable';
 import FormatViewer from '@/components/FormatViewer';
+import InputBinary from '@/components/InputBinary';
 
 export default {
   data() {
     return {
+      total: 0,
       filterValue: '',
       editDialog: false,
       hashData: [], // {key: xxx, value: xxx}
@@ -109,7 +109,7 @@ export default {
       loadMoreDisable: false,
     };
   },
-  components: {PaginationTable, FormatViewer},
+  components: {PaginationTable, FormatViewer, InputBinary},
   props: ['client', 'redisKey'],
   computed: {
     dialogTitle() {
@@ -130,6 +130,14 @@ export default {
         this.oneTimeListLength = 0;
         this.scanStream.resume();
       }
+
+      // total lines
+      this.initTotal();
+    },
+    initTotal() {
+      this.client.hlen(this.redisKey).then((reply) => {
+        this.total = reply;
+      });
     },
     resetTable() {
       this.hashData = [];
@@ -151,10 +159,10 @@ export default {
 
         for (let i = 0; i < reply.length; i += 2) {
           hashData.push({
-            key: this.$util.bufToString(reply[i]),
-            value: this.$util.bufToString(reply[i + 1]),
-            binaryK: !this.$util.bufVisible(reply[i]),
-            binaryV: !this.$util.bufVisible(reply[i + 1]),
+            key: reply[i],
+            keyDisplay: this.$util.bufToString(reply[i]),
+            value: reply[i + 1],
+            valueDisplay: this.$util.bufToString(reply[i + 1]),
           });
         }
 
@@ -182,7 +190,7 @@ export default {
     },
     showEditDialog(row) {
       this.editLineItem = row;
-      this.beforeEditItem = JSON.parse(JSON.stringify(row));
+      this.beforeEditItem = this.$util.cloneObjWithBuff(row);
       this.editDialog = true;
     },
     editLine() {
@@ -199,14 +207,14 @@ export default {
 
       client.hset(
         key,
-        before.binaryK ? this.$util.xToBuffer(after.key) : after.key,
-        before.binaryV ? this.$util.xToBuffer(after.value) : after.value
+        after.key,
+        after.value
       ).then((reply) => {
         // edit key && key changed
-        if (before.key && before.key !== after.key) {
+        if (before.key && !before.key.equals(after.key)) {
           client.hdel(
             key,
-            before.binaryK ? this.$util.xToBuffer(before.key) : before.key
+            before.key
           ).then((reply) => {
             this.initShow();
           });
@@ -230,7 +238,7 @@ export default {
       ).then(() => {
         this.client.hdel(
           this.redisKey,
-          row.binaryK ? this.$util.xToBuffer(row.key) : row.key
+          row.key
         ).then((reply) => {
           if (reply === 1) {
             this.$message.success({
